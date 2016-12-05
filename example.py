@@ -5,6 +5,9 @@ import ssl
 import numpy
 import random
 import pymongo
+from bugsToFeatureVector import VectorGenerator
+from sklearn.ensemble import RandomForestClassifier
+
 
 # Options for azure connection
 AZURE_KEY = '4S4139jcfvvpXFDRrTiEC6NmnWxb5J41nrDOns8UOSt2s37xt2s6tinw6zPgj5Ei41nOXB7i3q3DkKKQlQplEA=='
@@ -48,81 +51,68 @@ print('[CREATE] Pymongo client with azure connection')
 client = pymongo.MongoClient(connection_string, ssl_cert_reqs=ssl.CERT_NONE)
 
 print('[NOTE] Will select the bugs DATABASE for use')
-remote_db = client.bugs
+remote_db = client.cs706
 
 # GET COLLECTION FOR TRAINING
 # *******************************************************************************************
 
-COLLECTION = 'eclipse_test_A'
+COLLECTION = 'eclipse_test_C'
 
 print('[NOTE] Will select the %s COLLECTION for use' % COLLECTION)
-DB = remote_db[COLLECTION]
+DB = remote_db[COLLECTION].find()
+vg = VectorGenerator()
 
-base_pool = list(DB.find({'pool': 'BASE'}))
-test_pool = list(DB.find({'pool': 'TEST'}))
+#create vectors from data
+all_vecs = []
+for bug_tuple in DB:
+    vector = vg.getVector(bug_tuple)
+    all_vecs.append(vector)
 
-print('[NOTE] Retrieved base_pool with %s bugs in it' % len(base_pool))
-print('[NOTE] Retrieved test_pool with %s bugs in it' % len(test_pool))
+print(str(len(all_vecs)) + " vectors generated.")
 
-print('[NOTE] In base_pool there are %s duplicates and %s non-duplicates' %
-      (len([b for b in base_pool if len(b['dupes']) > 0]),
-       len([b for b in base_pool if len(b['dupes']) == 0])))
+#randomly partition into training and test sets
+test, test_y, training, training_y = [],[],[],[]
+random.seed(2)
+for i in range(len(all_vecs)):
+    choice = random.randint(0,3) #1 in 4 bugs go into the test set
+    if choice == 0:
+        test.append(all_vecs[i][0])
+        test_y.append(all_vecs[i][1])
+    else: #3 in 4 go into the training set
+        training.append(all_vecs[i][0])
+        training_y.append(all_vecs[i][1])
 
-print('[NOTE] In test_pool there are %s duplicates and %s non-duplicates' %
-      (len([b for b in test_pool if len(b['dupes']) > 0]),
-       len([b for b in test_pool if len(b['dupes']) == 0])))
+print("Training set size: " + str(len(training)) + "\nTesting set size: " + str(len(test)))
 
-# PAIR BUGS
-# *******************************************************************************************
-
-dup_pairs = []
-non_pairs = []
-
-# for each of the bugs in the test_pool that were duplicates of some bug in base_pool
-for bug in [b for b in test_pool if len(b['dupes']) > 0]:
-    # iterate the bugs in base_pool that they match
-    for match in bug['should_match']:
-        # sanity check
-        if match in bug['dupes']:
-            # add those pairs
-            dup_pairs.append((bug, find_in_pool_by_id(match, base_pool), True))
-
-# For each of the bugs in the test_pool
-for bug in test_pool:
-    # pair them with each bug in the base pool
-    for other in base_pool:
-        # sanity check
-        if other not in bug['dupes']:
-            # add this pair
-            non_pairs.append((bug, other, False))
-
-print('[NOTE] We created %s pairs of duplicate bugs' % len(dup_pairs))
-print('[NOTE] We created %s piars of NOT duplicate bugs' % len(non_pairs))
-
-SAMPLE_SIZE = min(len(dup_pairs), len(non_pairs))
-
-print('[NOTE] We will randomly sample out %s dup pairs and %s non-dup pairs' % (SAMPLE_SIZE, SAMPLE_SIZE))
-
-final_pairs = []
-final_pairs.extend(reservoir_sample(SAMPLE_SIZE, dup_pairs))
-final_pairs.extend(reservoir_sample(SAMPLE_SIZE, non_pairs))
-
-print('[NOTE] Final sample has %s PAIRS of bugs' % len(final_pairs))
-print('[NOTE] Shuffling so that we do not have a deterministic ordering')
-
-random.shuffle(final_pairs)
-
-print('[SUCCESS] final_pairs is ready for use!!')
-
-# EXTRACT FEATURES
-# *******************************************************************************************
-
-# todo: something here
-# convert the tuples of bug1, bug2, is_dup? into tuples of features to learn from
-
-print('[SUCCESS] feature tuples have been extracted and are ready for use!!')
-
-# DO THE LEARN THING
-# *******************************************************************************************
+#PARAM NOTES: probability is set to true so we can adjust for precision and recall,
+duplicateCLF = RandomForestClassifier(n_estimators=15)
+#train model on training set
+duplicateCLF.fit(training, training_y)
 
 print('[SUCCESS] we learned the thing!!')
+
+#step two: evaluate model
+print("Evaluating test set...")
+
+tp, fp, tn, fn = 0,0,0,0
+#walk through vector of guesses and count false positives, false natives, true positives, true negatives
+guesses = [t for t in duplicateCLF.predict(test)]
+v = zip(guesses, test_y)
+
+for guess, label in v:
+    if guess == 1:
+        if label == 1:
+            tp += 1
+        else:
+            fp += 1
+    if guess == 0:
+        if label == 0:
+            tn += 1
+        else:
+            fn += 1
+
+precision, recall = float(tp)/(tp + fp), float(tp)/(tp + fn)
+print("Test set evauluation completed")
+print("Precision: " + str(precision) + "\nRecall: " + str(recall))
+
+
