@@ -56,7 +56,7 @@ remote_db = client.cs706
 # GET COLLECTION FOR TRAINING
 # *******************************************************************************************
 
-COLLECTION = 'eclipse_test_C'
+COLLECTION = 'eclipse_test_E'
 
 print('[NOTE] Will select the %s COLLECTION for use' % COLLECTION)
 DB = remote_db[COLLECTION].find()

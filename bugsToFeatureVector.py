@@ -1,6 +1,7 @@
 import re
 import py_stringmatching.tokenizer as pyt
 import py_stringmatching.similarity_measure as sm
+import string
 
 def jaccard(seta, setb):
     seta = set(seta)
@@ -13,27 +14,49 @@ def jaccard(seta, setb):
 class VectorGenerator():
     def __init__(self):
         #initialize vector functions, stopwords, and available tokenization/set similarity utilities
-        self.functions = [self.hardwareSimilarity, self.stackTraceClassSoftSim, self.reportedOnDelta, self.technicalTitleSimilarity, self.componentMatch, self.title3GramSimilarity]
+        self.functions = [self.hardwarePlatformSimilarity, self.OSSimilarity, self.stackTraceClassSoftSim, self.reportedOnDelta, self.technicalTitleSimilarity, self.firstCommentAllWords, self.componentMatch, self.title3GramSimilarity, self.firstCommentSimilarity]
         self.stopwords = open('stopwords.txt').read().split('\n')
         self.qGrammer = pyt.qgram_tokenizer.QgramTokenizer(qval=3)
+        #monge-elkan defaults to a prefix weighted edit distance
         self.softSetSim = sm.monge_elkan.MongeElkan()
+        self.prefixWeightedSim = sm.jaro_winkler.JaroWinkler()
+        self.overlap = sm.overlap_coefficient.OverlapCoefficient()
 
 
-    #TODO: Accomodate synonyms like macintosh for Mac OS X, return 0.5 for values of ALL?
-    def hardwareSimilarity(self, bug_a, bug_b):
-        return jaccard(bug_a['hardware'],bug_b['hardware'])
+    #Assumes a [platform, OS] tuple in the hardware field, which is conventional for Eclipse Bugzilla
+    def hardwarePlatformSimilarity(self, bug_a, bug_b):
+        return (bug_a['hardware'][0].lower() == bug_b['hardware'][0].lower())
+
+    # Assumes a [platform, OS] tuple in the hardware field, which is conventional for Eclipse Bugzilla
+    def OSSimilarity(self, bug_a, bug_b):
+        return self.prefixWeightedSim.get_raw_score(bug_a['hardware'][1], bug_b['hardware'][1])
+
+    #The first comment typically explicates the problem, while further comments might be discussion
+    def firstCommentSimilarity(self, bug_a, bug_b):
+        parsed = []
+        for bug in [bug_a, bug_b]:
+            tokens = bug['comments'][0]['text'].lower().split()
+            parsed.append([word for word in tokens if word not in self.stopwords])
+        return jaccard(*parsed)
+
+    def firstCommentAllWords(self, bug_a, bug_b):
+        parsed = []
+        for bug in [bug_a, bug_b]:
+            tokens = bug['comments'][0]['text'].lower().split()
+            parsed.append(tokens)
+        return self.overlap.get_raw_score(*parsed)
+
 
     #word level title similarity
     def technicalTitleSimilarity(self, bug_a, bug_b):
         a_title, b_title, = bug_a['title'],bug_b['title']
         p = []
         for t in [a_title, b_title]:
-            t = t.rstrip('.')
             s = t.lower().split(' ')
             #strategy: remove everything that definitely isn't a technical term (ie 'and' 'the')
             parsed = [word for word in s if word not in self.stopwords]
             p.append(parsed)
-        return jaccard(*p)
+        return  self.overlap.get_raw_score(*p)
 
     #3gram jaccard similarity of titles
     def title3GramSimilarity(self, bug_a, bug_b):
