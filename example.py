@@ -56,7 +56,7 @@ remote_db = client.cs706
 # GET COLLECTION FOR TRAINING
 # *******************************************************************************************
 
-COLLECTION = 'eclipse_test_E'
+COLLECTION = 'eclipse_test_C'
 
 print('[NOTE] Will select the %s COLLECTION for use' % COLLECTION)
 DB = remote_db[COLLECTION].find()
@@ -112,7 +112,13 @@ for guess, label in v:
             fn += 1
 
 precision, recall = float(tp)/(tp + fp), float(tp)/(tp + fn)
-print("Test set evauluation completed")
+print("\nTest set evauluation completed.")
 print("Precision: " + str(precision) + "\nRecall: " + str(recall))
 
-
+#Added Exploratory Feature Rankings: These Approximate How Much Each Feature Contributes To the Model
+feature_name_to_weight = zip( duplicateCLF.feature_importances_, vg.function_names,)
+print("\nFeature Rankings in Classification")
+i = 1
+for weight, feature in sorted(feature_name_to_weight, reverse=True):
+    print(str(i) + '. ' + feature + ': ' + str(weight))
+    i += 1

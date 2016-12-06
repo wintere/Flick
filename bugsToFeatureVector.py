@@ -21,6 +21,7 @@ class VectorGenerator():
         self.softSetSim = sm.monge_elkan.MongeElkan()
         self.prefixWeightedSim = sm.jaro_winkler.JaroWinkler()
         self.overlap = sm.overlap_coefficient.OverlapCoefficient()
+        self.function_names = [func.__name__ for func in self.functions]
 
 
     #Assumes a [platform, OS] tuple in the hardware field, which is conventional for Eclipse Bugzilla
@@ -42,7 +43,9 @@ class VectorGenerator():
     def firstCommentAllWords(self, bug_a, bug_b):
         parsed = []
         for bug in [bug_a, bug_b]:
-            tokens = bug['comments'][0]['text'].lower().split()
+            raw = re.sub('\W', ' ', bug['comments'][0]['text'])
+            tokens = raw.lower().split()
+            tokens = [word for word in tokens if word not in self.stopwords]
             parsed.append(tokens)
         return self.overlap.get_raw_score(*parsed)
 
@@ -56,14 +59,13 @@ class VectorGenerator():
             #strategy: remove everything that definitely isn't a technical term (ie 'and' 'the')
             parsed = [word for word in s if word not in self.stopwords]
             p.append(parsed)
-        return  self.overlap.get_raw_score(*p)
+        return  jaccard(*p)
 
     #3gram jaccard similarity of titles
     def title3GramSimilarity(self, bug_a, bug_b):
         a_title, b_title, = bug_a['title'], bug_b['title']
         p = []
         for t in [a_title, b_title]:
-            t = t.rstrip('.')
             parsed = self.qGrammer.tokenize(t)
             p.append(parsed)
         return jaccard(*p)
