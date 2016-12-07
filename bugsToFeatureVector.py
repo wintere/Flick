@@ -2,6 +2,7 @@ import re
 import py_stringmatching.tokenizer as pyt
 import py_stringmatching.similarity_measure as sm
 import string
+import pickle
 
 def jaccard(seta, setb):
     seta = set(seta)
@@ -10,11 +11,16 @@ def jaccard(seta, setb):
     num = len(seta.intersection(setb))
     return float(num)/denom
 
+expression = re.compile(r'[0-9]+(?:[\.]?[0-9])|[\w]+(?:[\'\-]?[\w])*|')
+
+def tokenize(string):
+    return re.findall(expression, string)
+
 #vector generator class
 class VectorGenerator():
     def __init__(self):
         #initialize vector functions, stopwords, and available tokenization/set similarity utilities
-        self.functions = [self.hardwarePlatformSimilarity, self.OSSimilarity, self.stackTraceClassSoftSim, self.reportedOnDelta, self.technicalTitleSimilarity, self.firstCommentAllWords, self.componentMatch, self.title3GramSimilarity, self.firstCommentSimilarity]
+        self.functions = [self.hardwarePlatformSimilarity, self.OSSimilarity, self.stackTraceClassSoftSim, self.reportedOnDelta, self.technicalTitleSimilarity, self.firstCommentAllWords, self.componentMatch, self.title3GramSimilarity, self.firstCommentSimilarity, self.productMatch, self.versionMatch, self.tfidfKeyText]
         self.stopwords = open('stopwords.txt').read().split('\n')
         self.qGrammer = pyt.qgram_tokenizer.QgramTokenizer(qval=3)
         #monge-elkan defaults to a prefix weighted edit distance
@@ -22,6 +28,9 @@ class VectorGenerator():
         self.prefixWeightedSim = sm.jaro_winkler.JaroWinkler()
         self.overlap = sm.overlap_coefficient.OverlapCoefficient()
         self.function_names = [func.__name__ for func in self.functions]
+        #NOTE: corpora must be specific to the given database for TFIDF to work properly, as different systems have a different vocabulary
+        corpora = pickle.load(open('5000_sample_all_words.p', mode='rb'))
+        self.tfidf = sm.tfidf.TfIdf(corpora)
 
 
     #Assumes a [platform, OS] tuple in the hardware field, which is conventional for Eclipse Bugzilla
@@ -77,6 +86,19 @@ class VectorGenerator():
             return 0
         return 1
 
+    def productMatch(self, bug_a, bug_b):
+        a,b, = bug_a['product'].lower(),bug_b['product'].lower()
+        if a != b:
+            return 0
+        return 1
+
+    def versionMatch(self, bug_a, bug_b):
+        a,b, = bug_a['version'].lower(),bug_b['version'].lower()
+        if a == 'unspecified' or b == 'unspecified':
+            return -1
+        else:
+            return self.prefixWeightedSim.get_raw_score(a, b)
+
     #jaro-winkler set similarity between class level stack trace data
     #flaws: we're missing a lot of stack trace data
     def stackTraceClassSoftSim(self, bug_a, bug_b):
@@ -92,6 +114,32 @@ class VectorGenerator():
     def reportedOnDelta(self, bug_a, bug_b):
         d1, d2 = bug_a['reported_on'], bug_b['reported_on']
         return (abs(d1 - d2).days)
+
+
+    def tfidfKeyText(self, bug_a, bug_b):
+        target_fields = ['title', 'hardware', 'component', 'product', 'version']
+        sets = []
+        for bug in [bug_a, bug_b]:
+            tokens = []
+            # add information from key fields
+            for field in target_fields:
+                raw = bug[field]
+                if type(raw) is list:
+                    tokens.extend([j for i in raw for j in tokenize(i) if j != ''])
+                else:
+                    t = re.findall(expression, raw.lower())
+                    for token in t:
+                        if token != '' and token not in self.stopwords:
+                            tokens.append(token)
+            # plus initial comment info
+            if len(bug['comments']) > 0:
+                raw = bug['comments'][0]['text'].lower()
+                t = re.findall(expression, raw)
+                for token in t:
+                    if token != '' and token not in self.stopwords:
+                        tokens.append(token)
+            sets.append(tokens)
+        return self.tfidf.get_raw_score(*sets)
 
     #returns a vector, label tuple
     def getVector(self, bug):
