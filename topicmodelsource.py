@@ -41,7 +41,7 @@ remote_db = client.cs706
 COLLECTION = 'fedora_bugs'
 
 stopwords = open('stopwords.txt').read().split('\n')
-expression = re.compile(r'[a-z_]+(?:[\'\-_][a-z_])*')
+expression = re.compile(r'[0-9]+(?:[\.]?[0-9])|[\w\-\'\_\`]+')
 
 def tokenize(string):
     return re.findall(expression, string)
@@ -49,9 +49,9 @@ def tokenize(string):
 print('[NOTE] Will select the %s COLLECTION for use' % COLLECTION)
 DB = remote_db[COLLECTION].find()
 aggregate_texts = []
-target_fields = ['title', 'hardware','component','product']
+a_texts = []
+target_fields = ['title']
 for bug in DB:
-    print(bug.keys())
     tokens = []
     #add information from key fields
     for field in target_fields:
@@ -78,29 +78,30 @@ for bug in DB:
                 if token != '' and token not in stopwords and not token.isdigit():
                     tokens.append(token)
     aggregate_texts.append(tokens)
+    a_texts.append(" ".join(tokens))
 
 
 
 pickle.dump(aggregate_texts, open('fedora_sample_all_words', mode='wb'))
 # #STEP TWO: TOPIC MODELING
 
-# vectorizer = TfidfVectorizer(analyzer='word', min_df=0.09, max_df=0.93,smooth_idf=True, stop_words='english')
-# matrix = vectorizer.fit_transform(a_texts)
-# feature_names = vectorizer.get_feature_names()
-# vocab = feature_names
-#
-# model = LatentDirichletAllocation(n_topics=20, evaluate_every=5, max_iter=25)
-# model.fit(matrix)
-# n_top_words = 30
+vectorizer = TfidfVectorizer(analyzer='word', min_df=0.05, max_df=0.88, stop_words='english')
+matrix = vectorizer.fit_transform(a_texts)
+feature_names = vectorizer.get_feature_names()
+vocab = feature_names
+
+model = LatentDirichletAllocation(n_topics=10, evaluate_every=5, max_iter=20)
+model.fit(matrix)
+n_top_words = 35
 # #pickle.dump(aggregate_texts, open('50000_sample_all_words.p', mode='wb'))
-# topic_lists = []
-# for topic_idx, topic in enumerate(model.components_):
-#     t_words = {}
-#     print("Topic #%d:" % topic_idx)
-#     print(" ".join([feature_names[i]
-#                     for i in topic.argsort()[:-n_top_words - 1:-1]]))
-#     for i in topic.argsort()[:-n_top_words - 1:-1]:
-#         word = feature_names[i]
-#         t_words[word] = topic[i]
-#     topic_lists.append(t_words)
-# pickle.dump(topic_lists, open('fedora_topics_15_20', mode='wb'))
+topic_lists = []
+for topic_idx, topic in enumerate(model.components_):
+    t_words = {}
+    print("Topic #%d:" % topic_idx)
+    print(" ".join([feature_names[i]
+                    for i in topic.argsort()[:-n_top_words - 1:-1]]))
+    for i in topic.argsort()[:-n_top_words - 1:-1]:
+        word = feature_names[i]
+        t_words[word] = topic[i]
+    topic_lists.append(t_words)
+pickle.dump(topic_lists, open('fedora_topics_15_20', mode='wb'))

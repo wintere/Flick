@@ -7,6 +7,7 @@ from datetime import timedelta
 import math
 import scipy.spatial.distance
 
+pyth_expression = re.compile(r'[0-9]+(?:[\.]?[0-9])|[\w\-\'\_\`]+|\:')
 expression = re.compile(r'[0-9]+(?:[\.]?[0-9])|[A-z_]+(?:[\'\-_]?[A-z_])*')
 dot_expression = re.compile(r'[0-9]+(?:[\.]?[0-9])|[\w]+(?:[\'\-_\./]?[\w])*')
 
@@ -21,7 +22,7 @@ class VectorGenerator():
             self.topicModelSource = pickle.load(open('topic_lists_20_40', mode='rb'))
             self.top50Words = pickle.load(open('top50words', mode='rb'))
         elif mode == 'fedora':
-            self.functions = [self.logFragTfidf, self.logFragmentCodeLineSim, self.logFragmentSim, self.hardwarePlatformSimilarity, self.OSSimilarity,  self.reportedOnDelta, self.technicalTitleSimilarity, self.firstCommentAllWords, self.componentMatch, self.title3GramSimilarity, self.firstCommentSimilarity, self.productMatch, self.versionMatch, self.tfidfKeyText, self.titleTFIDF, self.topicModelDistance, self.topicModelEuclidean, self.top50Distance, self.hardwarePlatformSimilarity, self.OSSimilarity]
+            self.functions = [self.keyTextQGrams, self.logFragTfidf, self.logFragmentCodeLineSim, self.logFragmentSim, self.OSSimilarity,  self.reportedOnDelta, self.technicalTitleSimilarity, self.firstCommentAllWords,  self.title3GramSimilarity, self.firstCommentSimilarity, self.tfidfKeyText, self.titleTFIDF, self.topicModelDistance, self.topicModelEuclidean, self.top50Distance, self.OSSimilarity]
             corpora = pickle.load(open('fedora_sample_all_words','rb'))
             self.topicModelSource = pickle.load(open('fedora_topics_15_20', mode='rb'))
             self.top50Words = pickle.load(open('fedoratop50words', mode='rb'))
@@ -57,19 +58,29 @@ class VectorGenerator():
         return float(num) / denom
 
     def logFragmentSim(self, bug_a, bug_b):
-        bug_a_tokens = self.tokenize(bug_a['log_fragments'].lower())
-        bug_b_tokens = self.tokenize(bug_b['log_fragments'].lower())
-        return self.jaccard(bug_a_tokens, bug_b_tokens)
+        if 'log_fragments' in bug_a and 'log_fragments' in bug_b:
+            bug_a_tokens = self.tokenize(bug_a['log_fragments'].lower())
+            bug_b_tokens = self.tokenize(bug_b['log_fragments'].lower())
+            return self.adjustableJaccard.get_sim_score(bug_a_tokens, bug_b_tokens)
+        return -1
 
     def logFragTfidf(self, bug_a, bug_b):
-        bug_a_tokens = self.tokenize(bug_a['log_fragments'].lower())
-        bug_b_tokens = self.tokenize(bug_b['log_fragments'].lower())
-        return self.unmappedtfidif.get_sim_score(bug_a_tokens, bug_b_tokens)
+        if 'log_fragments' in bug_a and 'log_fragments' in bug_b:
+            bug_a_tokens = self.tokenize(bug_a['log_fragments'].lower())
+            bug_b_tokens = self.tokenize(bug_b['log_fragments'].lower())
+            return self.tfidf.get_sim_score(bug_a_tokens, bug_b_tokens)
+        return -1
 
     def logFragmentCodeLineSim(self, bug_a, bug_b):
-        bug_a_tokens = self.dot_tokenize(bug_a['log_fragments'].lower())
-        bug_b_tokens = self.dot_tokenize(bug_b['log_fragments'].lower())
-        return self.overlap.get_raw_score(bug_a_tokens, bug_b_tokens)
+        if 'log_fragments' in bug_a and 'log_fragments' in bug_b:
+            bug_a_tokens = self.dot_tokenize(bug_a['log_fragments'].lower())
+            bug_b_tokens = self.dot_tokenize(bug_b['log_fragments'].lower())
+            return self.overlap.get_raw_score(bug_a_tokens, bug_b_tokens)
+        return -1
+
+    def python_tokenize(self, string):
+        return re.findall(pyth_expression, string)
+
 
     def dot_tokenize(self, string):
         return re.findall(dot_expression, string)
@@ -97,12 +108,16 @@ class VectorGenerator():
     #The first comment typically explicates the problem, while further comments might be discussion
     def firstCommentSimilarity(self, bug_a, bug_b):
         parsed = []
+        if len(bug_a['comments']) == 0 or len(bug_b['comments']) == 0:
+            return -1
         for bug in [bug_a, bug_b]:
             tokens = bug['comments'][0]['text'].lower().split()
             parsed.append([word for word in tokens if word not in self.stopwords])
         return self.jaccard(*parsed)
 
     def firstCommentAllWords(self, bug_a, bug_b):
+        if len(bug_a['comments']) == 0 or len(bug_b['comments']) == 0:
+            return -1
         parsed = []
         for bug in [bug_a, bug_b]:
             raw = re.sub('\W', ' ', bug['comments'][0]['text'])
@@ -133,7 +148,13 @@ class VectorGenerator():
             p.append(parsed)
         return  self.tfidf.get_raw_score(*p)
 
-
+    def keyTextQGrams(self, bug_a, bug_b):
+        a_key, b_key, = bug_a['key_text'], bug_b['key_text']
+        p = []
+        for t in [a_key, b_key]:
+            parsed = self.qGrammer.tokenize(" ".join(t))
+            p.append(parsed)
+        return self.adjustableJaccard.get_sim_score(*p)
 
     #3gram jaccard similarity of titles
     def title3GramSimilarity(self, bug_a, bug_b):
@@ -270,7 +291,10 @@ class VectorGenerator():
                 if type(raw) is list:
                     tokens.extend([j for i in raw for j in self.tokenize(i) if j != ''])
                 else:
-                    t = re.findall(expression, raw.lower())
+                    if self.mode == 'eclipse':
+                        t = re.findall(expression, raw.lower())
+                    else:
+                        t = self.python_tokenize(raw.lower())
                     for token in t:
                         if token != '' and token not in self.stopwords:
                             tokens.append(token)
@@ -278,7 +302,10 @@ class VectorGenerator():
                 for comment in b['comments']:
                     if (comment['date'] <= (thresh + timedelta(minutes=15))):
                         raw = comment['text'].lower()
-                        t = re.findall(expression, raw)
+                        if self.mode == 'eclipse':
+                            t = re.findall(expression, raw)
+                        else:
+                            t = self.python_tokenize(raw)
                         for token in t:
                             if token != '' and token not in self.stopwords:
                                 tokens.append(token)
