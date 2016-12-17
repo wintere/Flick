@@ -7,118 +7,86 @@ import random
 import pymongo
 from bugsToFeatureVector import VectorGenerator
 from sklearn.ensemble import RandomForestClassifier
-
-
-# Options for azure connection
-AZURE_KEY = '4S4139jcfvvpXFDRrTiEC6NmnWxb5J41nrDOns8UOSt2s37xt2s6tinw6zPgj5Ei41nOXB7i3q3DkKKQlQplEA=='
-AZURE_USR = 'csci706'
-AZURE_HST = 'csci706.documents.azure.com'
-AZURE_PRT = '10250'
-AZURE_FMT = 'mongodb://%s:%s@%s:%s/?%s'
-AZURE_OPT = 'ssl=true'
-
-
-def reservoir_sample(take, from_this):
-    sample = []
-    for i, thingie in enumerate(from_this):
-        if i < take:
-            sample.append(thingie)
-        elif i >= take and random.random() < take / float(i + 1):
-            replace = random.randint(0, len(sample) - 1)
-            sample[replace] = thingie
-    return sample
-
-
-def find_in_pool_by_id(bug_id, pool):
-    filtered = filter(lambda b: b['id'] == bug_id, pool)
-    if len(filtered) == 1:
-        return filtered[0]
-    else:
-        print('[WARN] Could not find bug matching id=%s' % bug_id)
-        return None
-
-print('[CREATE] Azure connection string string')
-connection_string = AZURE_FMT % (AZURE_USR,
-                                 AZURE_KEY,
-                                 AZURE_HST,
-                                 AZURE_PRT,
-                                 AZURE_OPT)
-
-print('[CREATE] Done! Connection string= "%s"' % connection_string)
-print('[CREATE] Pymongo client with azure connection')
+import time
+import sys
+from multiprocessing import Pool
 
 # Makes a connection to the MongoDB sitting out in Azure
-client = pymongo.MongoClient(connection_string, ssl_cert_reqs=ssl.CERT_NONE)
+if __name__ == '__main__':
+    client = pymongo.MongoClient()
 
-print('[NOTE] Will select the bugs DATABASE for use')
-remote_db = client.cs706
+    remote_db = client.cs706
 
-# GET COLLECTION FOR TRAINING
-# *******************************************************************************************
+    # GET COLLECTION FOR TRAINING
+    # *******************************************************************************************
+    if len(sys.argv) != 2:
+        print("USAGE: COLLECTION_NAME")
+        exit()
 
-COLLECTION = 'eclipse_test_C'
+    COLLECTION = sys.argv[1]
 
-print('[NOTE] Will select the %s COLLECTION for use' % COLLECTION)
-DB = remote_db[COLLECTION].find()
-vg = VectorGenerator()
+    print('[NOTE] Will select the %s COLLECTION for use' % COLLECTION)
+    DB = remote_db[COLLECTION].find()
+    vg = VectorGenerator()
 
-#create vectors from data
-all_vecs = []
-for bug_tuple in DB:
-    vector = vg.getVector(bug_tuple)
-    all_vecs.append(vector)
+    z = time.time()
+    #create vectors from data
+    p = Pool(4)
+    all_vecs = p.map(vg.getVector,[bug_tuple for bug_tuple in DB])
+    print(str(len(all_vecs)) + " vectors generated in " + str(time.time() - z) + " seconds.")
 
-print(str(len(all_vecs)) + " vectors generated.")
+    #randomly partition into training and test sets
+    test, test_y, training, training_y = [],[],[],[]
+    random.seed(2)
+    for i in range(len(all_vecs)):
+        choice = random.randint(0,3) #1 in 4 bugs go into the test set
+        if choice == 0:
+            test.append(all_vecs[i][0])
+            test_y.append(all_vecs[i][1])
+        else: #3 in 4 go into the training set
+            training.append(all_vecs[i][0])
+            training_y.append(all_vecs[i][1])
 
-#randomly partition into training and test sets
-test, test_y, training, training_y = [],[],[],[]
-random.seed(2)
-for i in range(len(all_vecs)):
-    choice = random.randint(0,3) #1 in 4 bugs go into the test set
-    if choice == 0:
-        test.append(all_vecs[i][0])
-        test_y.append(all_vecs[i][1])
-    else: #3 in 4 go into the training set
-        training.append(all_vecs[i][0])
-        training_y.append(all_vecs[i][1])
+    print("Training set size: " + str(len(training)) + "\nTesting set size: " + str(len(test)))
 
-print("Training set size: " + str(len(training)) + "\nTesting set size: " + str(len(test)))
+    #PARAM NOTES: probability is set to true so we can adjust for precision and recall,
+    duplicateCLF = RandomForestClassifier(n_estimators=84, max_features=25)
+    #train model on training set
+    duplicateCLF.fit(training, training_y)
 
-#PARAM NOTES: probability is set to true so we can adjust for precision and recall,
-duplicateCLF = RandomForestClassifier(n_estimators=15)
-#train model on training set
-duplicateCLF.fit(training, training_y)
+    print('[SUCCESS] we learned the thing!!')
 
-print('[SUCCESS] we learned the thing!!')
+    #step two: evaluate model
+    print("Evaluating test set...")
 
-#step two: evaluate model
-print("Evaluating test set...")
+    tp, fp, tn, fn = 0,0,0,0
+    #walk through vector of guesses and count false positives, false natives, true positives, true negatives
+    guesses = [t for t in duplicateCLF.predict_proba(test)]
+    v = zip(guesses, test_y)
 
-tp, fp, tn, fn = 0,0,0,0
-#walk through vector of guesses and count false positives, false natives, true positives, true negatives
-guesses = [t for t in duplicateCLF.predict(test)]
-v = zip(guesses, test_y)
-
-for guess, label in v:
-    if guess == 1:
-        if label == 1:
+    for guess, label in v:
+        #ADJUST
+        if guess[1] > 0.60:
+            o = 1
+        else:
+            o = 0
+        if o == 1 and label == 1:
             tp += 1
-        else:
-            fp += 1
-    if guess == 0:
-        if label == 0:
-            tn += 1
-        else:
+        elif o == 0 and label == 1:
             fn += 1
+        elif o == 1 and label == 0:
+            fp += 1
+        else:
+            tn += 1
 
-precision, recall = float(tp)/(tp + fp), float(tp)/(tp + fn)
-print("\nTest set evauluation completed.")
-print("Precision: " + str(precision) + "\nRecall: " + str(recall))
+    precision, recall = float(tp)/(tp + fp), float(tp)/(tp + fn)
+    print("\nTest set evaluation completed.")
+    print("Precision: " + str(precision) + "\nRecall: " + str(recall))
 
-#Added Exploratory Feature Rankings: These Approximate How Much Each Feature Contributes To the Model
-feature_name_to_weight = zip( duplicateCLF.feature_importances_, vg.function_names,)
-print("\nFeature Rankings in Classification")
-i = 1
-for weight, feature in sorted(feature_name_to_weight, reverse=True):
-    print(str(i) + '. ' + feature + ': ' + str(weight))
-    i += 1
+    #Added Exploratory Feature Rankings: These Approximate How Much Each Feature Contributes To the Model
+    feature_name_to_weight = zip( duplicateCLF.feature_importances_, vg.function_names)
+    print("\nFeature Rankings in Classification")
+    i = 1
+    for weight, feature in sorted(feature_name_to_weight, reverse=True):
+        print(str(i) + '. ' + feature + ': ' + str(weight))
+        i += 1

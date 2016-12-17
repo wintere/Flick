@@ -29,13 +29,7 @@ client = pymongo.MongoClient(connection_string, ssl_cert_reqs=ssl.CERT_NONE).cs7
 local = pymongo.MongoClient().cs706
 
 migrate = [
-    'eclipse_test_A',
-    'eclipse_test_B',
-    'eclipse_test_C',
-    'eclipse_test_D',
-    'eclipse_test_E',
-    'eclipse_test_F',
-    'eclipse_test_G'
+    'bugs_with_traces'
 ]
 
 for db in migrate:
