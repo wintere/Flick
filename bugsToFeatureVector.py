@@ -8,12 +8,24 @@ import math
 import scipy.spatial.distance
 
 expression = re.compile(r'[0-9]+(?:[\.]?[0-9])|[A-z_]+(?:[\'\-_]?[A-z_])*')
+dot_expression = re.compile(r'[0-9]+(?:[\.]?[0-9])|[\w]+(?:[\'\-_\./]?[\w])*')
 
 #vector generator class
 class VectorGenerator():
-    def __init__(self):
+    def __init__(self, mode='eclipse'):
+        self.mode = mode
+        if mode =='eclipse':
         #initialize vector functions, stopwords, and available tokenization/set similarity utilities
-        self.functions = [self.stackTraceFirstClass,self.stackTraceClassSoftSim, self.hardwarePlatformSimilarity, self.OSSimilarity,  self.reportedOnDelta, self.technicalTitleSimilarity, self.firstCommentAllWords, self.componentMatch, self.title3GramSimilarity, self.firstCommentSimilarity, self.productMatch, self.versionMatch, self.tfidfKeyText, self.importanceDelta, self.titleTFIDF, self.topicModelDistance, self.topicModelEuclidean, self.top50Distance, self.stackTraceLengthDelta, self.stackTraceLinesSoftSim]
+            corpora = pickle.load(open('50000_sample_all_words.p', 'rb'))
+            self.functions = [self.stackTraceTokensJaccard, self.stackTraceFirstClass,self.stackTraceClassSoftSim, self.hardwarePlatformSimilarity, self.OSSimilarity,  self.reportedOnDelta, self.technicalTitleSimilarity, self.firstCommentAllWords, self.componentMatch, self.title3GramSimilarity, self.firstCommentSimilarity, self.productMatch, self.versionMatch, self.tfidfKeyText, self.importanceDelta, self.titleTFIDF, self.topicModelDistance, self.topicModelEuclidean, self.top50Distance, self.stackTraceLengthDelta, self.stackTraceLinesSoftSim]
+            self.topicModelSource = pickle.load(open('topic_lists_20_40', mode='rb'))
+            self.top50Words = pickle.load(open('top50words', mode='rb'))
+        elif mode == 'fedora':
+            self.functions = [self.logFragTfidf, self.logFragmentCodeLineSim, self.logFragmentSim, self.hardwarePlatformSimilarity, self.OSSimilarity,  self.reportedOnDelta, self.technicalTitleSimilarity, self.firstCommentAllWords, self.componentMatch, self.title3GramSimilarity, self.firstCommentSimilarity, self.productMatch, self.versionMatch, self.tfidfKeyText, self.titleTFIDF, self.topicModelDistance, self.topicModelEuclidean, self.top50Distance, self.hardwarePlatformSimilarity, self.OSSimilarity]
+            corpora = pickle.load(open('fedora_sample_all_words','rb'))
+            self.topicModelSource = pickle.load(open('fedora_topics_15_20', mode='rb'))
+            self.top50Words = pickle.load(open('fedoratop50words', mode='rb'))
+
         self.stopwords = open('stopwords.txt').read().split('\n')
         self.qGrammer = pyt.qgram_tokenizer.QgramTokenizer(qval=3)
         #monge-elkan defaults to a prefix weighted edit distance
@@ -21,12 +33,13 @@ class VectorGenerator():
         self.prefixWeightedSim = sm.jaro_winkler.JaroWinkler()
         self.overlap = sm.overlap_coefficient.OverlapCoefficient()
         self.function_names = [func.__name__ for func in self.functions]
+        self.adjustableJaccard = sm.jaccard.Jaccard()
         #NOTE: corpora must be specific to the given database for TFIDF to work properly, as different systems have a different vocabulary
-        corpora = pickle.load(open('50000_sample_all_words.p', 'rb'))
+
         self.tfidf = sm.tfidf.TfIdf(corpora)
+        self.unmappedtfidif = sm.tfidf.TfIdf()
         self.needleman = sm.jaro.Jaro()
-        self.topicModelSource = pickle.load(open('topic_lists_20_40', mode='rb'))
-        self.top50Words = pickle.load(open('top50words',mode='rb'))
+
 
         for i in range(len(self.topicModelSource)):
             self.function_names.append("topic" + (str(i)))
@@ -43,7 +56,23 @@ class VectorGenerator():
             return -1
         return float(num) / denom
 
+    def logFragmentSim(self, bug_a, bug_b):
+        bug_a_tokens = self.tokenize(bug_a['log_fragments'].lower())
+        bug_b_tokens = self.tokenize(bug_b['log_fragments'].lower())
+        return self.jaccard(bug_a_tokens, bug_b_tokens)
 
+    def logFragTfidf(self, bug_a, bug_b):
+        bug_a_tokens = self.tokenize(bug_a['log_fragments'].lower())
+        bug_b_tokens = self.tokenize(bug_b['log_fragments'].lower())
+        return self.unmappedtfidif.get_sim_score(bug_a_tokens, bug_b_tokens)
+
+    def logFragmentCodeLineSim(self, bug_a, bug_b):
+        bug_a_tokens = self.dot_tokenize(bug_a['log_fragments'].lower())
+        bug_b_tokens = self.dot_tokenize(bug_b['log_fragments'].lower())
+        return self.overlap.get_raw_score(bug_a_tokens, bug_b_tokens)
+
+    def dot_tokenize(self, string):
+        return re.findall(dot_expression, string)
 
     def tokenize(self, string):
         return re.findall(expression, string)
@@ -167,6 +196,13 @@ class VectorGenerator():
             # indeterminate case (very common)
             return -1
 
+    def stackTraceTokensJaccard(self, bug_a, bug_b):
+        alist = (self.tokenize(b[0]) for b in bug_a['trace_fragments'][:15])
+        blist = (self.tokenize(b[0]) for b in bug_b['trace_fragments'][:15])
+        am = [sl for l in alist for sl in l]
+        bm = [sl for l in blist for sl in l]
+        return self.adjustableJaccard.get_sim_score(am, bm)
+
     def stackTraceFirstClass(self, bug_a, bug_b):
         alist = set([b[0] for b in bug_a['trace_fragments'][:3]])
         blist = set([b[0] for b in bug_b['trace_fragments'][:3]])
@@ -219,15 +255,17 @@ class VectorGenerator():
     def tfidfKeyText(self, bug_a, bug_b):
         return self.tfidf.get_sim_score(bug_a['key_text'], bug_b['key_text'])
 
+
     #returns a vector, label tuple
     def getVector(self, bug):
         v = []
+        key_fields = ['title','component','hardware','product','version']
         bug_a, bug_b = bug['bug_a'], bug['bug_b']
         thresh = max(bug_a['reported_on'],bug_b['reported_on'])
         for b in [bug_a, bug_b]:
             tokens = []
             b['top_50'] = [0.00001] * len(self.top50Words)
-            for field in ['title','component','hardware','product','version']:
+            for field in key_fields:
                 raw = b[field]
                 if type(raw) is list:
                     tokens.extend([j for i in raw for j in self.tokenize(i) if j != ''])

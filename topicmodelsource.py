@@ -38,7 +38,7 @@ print('[NOTE] Will select the bugs DATABASE for use')
 remote_db = client.cs706
 
 
-COLLECTION = 'eclipse_random_B'
+COLLECTION = 'fedora_bugs'
 
 stopwords = open('stopwords.txt').read().split('\n')
 expression = re.compile(r'[a-z_]+(?:[\'\-_][a-z_])*')
@@ -49,8 +49,9 @@ def tokenize(string):
 print('[NOTE] Will select the %s COLLECTION for use' % COLLECTION)
 DB = remote_db[COLLECTION].find()
 aggregate_texts = []
-target_fields = ['title', 'hardware','component','product','version']
+target_fields = ['title', 'hardware','component','product']
 for bug in DB:
+    print(bug.keys())
     tokens = []
     #add information from key fields
     for field in target_fields:
@@ -80,10 +81,10 @@ for bug in DB:
 
 
 
-# a_texts = [' '.join(tokens) for tokens in aggregate_texts]
+pickle.dump(aggregate_texts, open('fedora_sample_all_words', mode='wb'))
 # #STEP TWO: TOPIC MODELING
 
-# vectorizer = TfidfVectorizer(analyzer='word', min_df=0.09, max_df=0.95,smooth_idf=True)
+# vectorizer = TfidfVectorizer(analyzer='word', min_df=0.09, max_df=0.93,smooth_idf=True, stop_words='english')
 # matrix = vectorizer.fit_transform(a_texts)
 # feature_names = vectorizer.get_feature_names()
 # vocab = feature_names
@@ -102,4 +103,4 @@ for bug in DB:
 #         word = feature_names[i]
 #         t_words[word] = topic[i]
 #     topic_lists.append(t_words)
-pickle.dump(topic_lists, open('topic_lists_20_40', mode='wb'))
+# pickle.dump(topic_lists, open('fedora_topics_15_20', mode='wb'))

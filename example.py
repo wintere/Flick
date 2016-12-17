@@ -27,11 +27,15 @@ if __name__ == '__main__':
 
     print('[NOTE] Will select the %s COLLECTION for use' % COLLECTION)
     DB = remote_db[COLLECTION].find()
-    vg = VectorGenerator()
+    if 'fedora' in COLLECTION or 'logs' in COLLECTION:
+        mode = 'fedora'
+    else:
+        mode= 'eclipse'
+    vg = VectorGenerator(mode=mode)
 
     z = time.time()
     #create vectors from data
-    p = Pool(4)
+    p = Pool(6)
     all_vecs = p.map(vg.getVector,[bug_tuple for bug_tuple in DB])
     print(str(len(all_vecs)) + " vectors generated in " + str(time.time() - z) + " seconds.")
 
@@ -50,7 +54,7 @@ if __name__ == '__main__':
     print("Training set size: " + str(len(training)) + "\nTesting set size: " + str(len(test)))
 
     #PARAM NOTES: probability is set to true so we can adjust for precision and recall,
-    duplicateCLF = RandomForestClassifier(n_estimators=84, max_features=25)
+    duplicateCLF = RandomForestClassifier(n_estimators=87, max_features=25)
     #train model on training set
     duplicateCLF.fit(training, training_y)
 
@@ -66,7 +70,7 @@ if __name__ == '__main__':
 
     for guess, label in v:
         #ADJUST
-        if guess[1] > 0.60:
+        if guess[1] > 0.6:
             o = 1
         else:
             o = 0
